@@ -95,7 +95,13 @@ function render(row){
 
   const canvas = s1.querySelector('#qrCanvas');
   const qrText = (row.qr_url && row.qr_url.trim()) ? row.qr_url.trim() : (row.activation_code || '');
-  if (qrText) QRCode.toCanvas(canvas, qrText, { width: 220, margin: 1 }, ()=>{});
+  try {
+    if (window.QRCode && canvas && qrText) {
+      QRCode.toCanvas(canvas, qrText, { width: 220, margin: 1 }, ()=>{});
+    }
+  } catch (e) {
+    console.warn('QR render failed:', e);
+  }
 
   // Step 2 — Primary SIM + data switching
   const s2 = document.createElement('li');
