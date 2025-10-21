@@ -1,0 +1,2 @@
+id,name,activation_code,smdp,iccid,imsi,apn_name,apn_apn,apn_user,apn_pass,apn_mcc,apn_mnc,operator_code,qr_url
+1042,Alex Smith,1$SMDP.EXAMPLE.COM$ABC-123-DEF,SMDP.EXAMPLE.COM,8901120000123456789,310150123456789,Event 5G APN,apn.event5g.local,,,001,01,12345,

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Event Private 5G — eSIM Helper</title>
+  <link rel="icon" href="/public/favicon.ico">
+  <!-- Tailwind via CDN for quick styling -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="manifest" href="/public/manifest.webmanifest">
+  <link rel="stylesheet" href="/assets/css/styles.css">
+</head>
+<body class="bg-slate-100 text-slate-900">
+  <div class="max-w-3xl mx-auto p-4 md:p-8">
+    <header class="mb-6">
+      <h1 class="text-2xl md:text-3xl font-bold">Event Private 5G — eSIM Helper</h1>
+      <p class="text-slate-600">Guided install & configuration for the event network.</p>
+    </header>
+
+    <div id="status" class="mb-4 text-sm text-slate-700"></div>
+    <div id="participant" class="hidden step-card mb-6"></div>
+    <ol id="steps" class="space-y-4"></ol>
+
+    <footer class="mt-10 text-xs text-slate-500">
+      This helper opens the right settings where possible; some steps still need a user tap.
+    </footer>
+  </div>
+
+  <!-- Vendors -->
+  <script src="/assets/js/vendors/papaparse.min.js"></script>
+  <script src="/assets/js/vendors/qrcode.min.js"></script>
+
+  <!-- App config (edit this only) -->
+  <script src="/assets/js/config.js"></script>
+
+  <!-- App logic -->
+  <script src="/assets/js/main.js"></script>
+</body>
+</html>

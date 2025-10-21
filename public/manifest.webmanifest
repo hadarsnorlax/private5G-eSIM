@@ -1,0 +1,11 @@
+{
+  "name": "Event Private 5G — eSIM Helper",
+  "short_name": "eSIM Helper",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0f172a",
+  "icons": [
+    { "src": "/public/favicon.ico", "sizes": "48x48", "type": "image/x-icon" }
+  ]
+}
