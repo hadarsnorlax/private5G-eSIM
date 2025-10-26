@@ -43,37 +43,361 @@ function openAny(urls = []) {
   } catch(e) {
     openAny(urls);
   }
+  // Bind any data-action/data-copy elements we added via innerHTML
+  try { bindSettingsLinks(steps); } catch(e){ console.warn('bindSettingsLinks failed', e); }
 }
 
 // Unified helper to open Android Settings pages with multiple formats.
 // Uses anchor-click approach to maximize Chrome/OEM compatibility.
 function openSettings(action) {
-  const candidates = [
-    // Chrome-friendly intent URIs (with dummy host + package)
-    `intent://open/#Intent;action=${action};package=com.android.settings;end`,
-    `intent://settings/#Intent;action=${action};package=com.android.settings;end`,
-    // Simple intent fallback
-    `intent:#Intent;action=${action};package=com.android.settings;end`,
-    // Last resort: Settings root
-    'intent://open/#Intent;action=android.settings.SETTINGS;package=com.android.settings;end'
-  ];
+  console.info('openSettings invoked', action);
+  // Safer strategy: open Settings root first (safe) and offer an explicit
+  // "Try deep link" button so we don't immediately trigger an unsupported
+  // action that shows an "Item not found" page on some devices.
+  if (!deviceIsAndroid()) {
+    // Non-Android: instruct the user instead
+    toast('Open your Settings app and follow the on-screen path');
+    return;
+  }
 
-  (function tryNext(i=0){
-    if (i >= candidates.length) return;
+  // Build curated alternate action names for vendor differences.
+  // IMPORTANT: avoid doing in-string replacements like replacing
+  // 'APN_SETTINGS' with 'com.android.settings.APN_SETTINGS' because that
+  // produced malformed actions such as
+  // 'android.settings.com.android.settings.APN_SETTINGS'. Instead, add
+  // standalone alternative action identifiers.
+  const variants = [action];
+  try {
+    const base = action.split('.').pop(); // last token, e.g. 'APN_SETTINGS'
+    // Curated action variants per feature to increase chance of success on OEM ROMs
+    if (base === 'SIM_SETTINGS' || base === 'SIM_MANAGEMENT_SETTINGS') {
+      variants.push(
+        'android.settings.SIM_SETTINGS',
+        'android.settings.SIM_MANAGEMENT_SETTINGS',
+        'com.android.settings.SIM_SETTINGS',
+        'com.android.settings.SIM_MANAGEMENT_SETTINGS'
+      );
+      // Samsung-specific class-based actions sometimes exist
+      variants.push('com.samsung.android.settings.sim.SimSettings');
+    } else if (base === 'ADD_ESIM') {
+      variants.push(
+        'android.settings.ADD_ESIM',
+        'com.android.settings.action.ADD_ESIM',
+        'com.samsung.android.settings.action.ADD_ESIM'
+      );
+    } else if (base === 'APN_SETTINGS') {
+      variants.push(
+        'android.settings.APN_SETTINGS',
+        'com.android.settings.APN_SETTINGS',
+        'com.samsung.android.settings.APN_SETTINGS',
+        'com.samsung.settings.ApnSettings'
+      );
+    } else if (base === 'DATA_ROAMING_SETTINGS') {
+      variants.push(
+        'android.settings.DATA_ROAMING_SETTINGS',
+        'com.android.settings.DATA_ROAMING_SETTINGS',
+        'com.samsung.android.settings.DATA_ROAMING_SETTINGS'
+      );
+    } else if (base === 'NETWORK_OPERATOR_SETTINGS') {
+      variants.push(
+        'android.settings.NETWORK_OPERATOR_SETTINGS',
+        'com.android.settings.NETWORK_OPERATOR_SETTINGS',
+        'com.samsung.android.settings.NETWORK_OPERATOR_SETTINGS'
+      );
+    } else {
+      // Generic fallback: try the base under common prefixes.
+      variants.push(`android.settings.${base}`);
+      variants.push(`com.android.settings.${base}`);
+      variants.push(`com.samsung.android.settings.${base}`);
+    }
+  } catch(e) { /* ignore */ }
+
+  let deepCandidates = [];
+  const extraPackages = [
+    'com.android.settings',
+    'com.samsung.android.settings',
+    'com.samsung.android.sm',
+    'com.samsung.android.app.settings',
+    'com.samsung.settings'
+  ];
+  for (const act of variants) {
+    // Try package-less intents first (allow the system to resolve to the
+    // correct OEM settings package). Then include package-specific forms.
+    deepCandidates.push(`intent://open/#Intent;action=${act};end`);
+    deepCandidates.push(`intent://settings/#Intent;action=${act};end`);
+    deepCandidates.push(`intent:#Intent;action=${act};end`);
+    for (const pkg of extraPackages) {
+      deepCandidates.push(`intent://open/#Intent;action=${act};package=${pkg};end`);
+      deepCandidates.push(`intent://settings/#Intent;action=${act};package=${pkg};end`);
+      deepCandidates.push(`intent:#Intent;action=${act};package=${pkg};end`);
+    }
+  }
+  // Deduplicate candidates while preserving order
+  deepCandidates = deepCandidates.filter((v,i,self)=> self.indexOf(v) === i);
+
+  const settingsRoot = 'intent://open/#Intent;action=android.settings.SETTINGS;package=com.android.settings;end';
+
+  // Open Settings root immediately (less likely to show "Item not found").
+  (function openRoot(){
     const a = document.createElement('a');
-    a.href = candidates[i];
+    a.href = settingsRoot;
     a.style.display = 'none';
-    a.target = '_self'; // same tab keeps gesture context
+    a.target = '_self';
     document.body.appendChild(a);
     a.click();
-    setTimeout(()=>{ document.body.removeChild(a); tryNext(i+1); }, 1200);
+    setTimeout(()=>{ document.body.removeChild(a); }, 800);
   })();
+
+  // Create a diagnostic panel listing all deep-link candidates so the user can
+  // try each one individually (prevents automatic Item not found pages).
+  const existing = document.getElementById('deepLinkPanel');
+  if (existing) existing.remove();
+  const panel = document.createElement('div');
+  panel.id = 'deepLinkPanel';
+  panel.style.position = 'fixed';
+  panel.style.right = '12px';
+  panel.style.bottom = '12px';
+  panel.style.background = 'white';
+  panel.style.border = '1px solid #e6e6e6';
+  panel.style.padding = '10px';
+  panel.style.borderRadius = '8px';
+  panel.style.boxShadow = '0 6px 18px rgba(0,0,0,0.08)';
+  panel.style.zIndex = 9999;
+  const header = document.createElement('div');
+  header.style.fontSize = '13px';
+  header.style.marginBottom = '8px';
+  header.style.color = '#334155';
+  header.textContent = 'Settings opened. Try a direct deep-link candidate below (tap to try).';
+  panel.appendChild(header);
+
+  const list = document.createElement('div');
+  list.style.maxHeight = '260px';
+  list.style.overflow = 'auto';
+  list.style.display = 'flex';
+  list.style.flexDirection = 'column';
+  list.style.gap = '6px';
+  deepCandidates.forEach((href, idx)=>{
+    const row = document.createElement('div');
+    row.style.display = 'flex';
+    row.style.gap = '6px';
+    row.style.alignItems = 'center';
+
+    const txt = document.createElement('div');
+    txt.style.fontSize = '12px';
+    txt.style.color = '#0f172a';
+    txt.style.flex = '1 1 auto';
+    txt.textContent = href.length > 80 ? href.slice(0,76) + '…' : href;
+    txt.title = href;
+
+    const tryBtn = document.createElement('button');
+    tryBtn.className = 'btn';
+    tryBtn.textContent = 'Try';
+    tryBtn.dataset.href = href;
+
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'btn';
+    copyBtn.textContent = 'Copy';
+    copyBtn.dataset.href = href;
+
+    row.appendChild(txt);
+    row.appendChild(tryBtn);
+    row.appendChild(copyBtn);
+    list.appendChild(row);
+  });
+
+  panel.appendChild(list);
+
+  const footer = document.createElement('div');
+  footer.style.display = 'flex';
+  footer.style.justifyContent = 'flex-end';
+  footer.style.marginTop = '8px';
+  footer.style.gap = '8px';
+  const copyDiagBtn = document.createElement('button');
+  copyDiagBtn.className = 'btn';
+  copyDiagBtn.textContent = 'Copy diagnostics';
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'btn';
+  closeBtn.textContent = 'Close';
+  footer.appendChild(copyDiagBtn);
+  footer.appendChild(closeBtn);
+  panel.appendChild(footer);
+
+  document.body.appendChild(panel);
+
+  closeBtn.addEventListener('click', ()=>{ panel.remove(); });
+
+  copyDiagBtn.addEventListener('click', ()=>{
+    const diag = {
+      userAgent: navigator.userAgent,
+      timestamp: new Date().toISOString(),
+      candidates: deepCandidates
+    };
+    const txt = JSON.stringify(diag, null, 2);
+    navigator.clipboard?.writeText(txt).then(()=> toast('Diagnostics copied'));
+  });
+
+  // Delegated handler for Try and Copy buttons
+  list.addEventListener('click', (ev)=>{
+    const t = ev.target;
+    if (!t.dataset || !t.dataset.href) return;
+    const href = t.dataset.href;
+    if (t.textContent === 'Copy') {
+      navigator.clipboard?.writeText(href).then(()=>toast('Candidate copied'));
+      return;
+    }
+    if (t.textContent === 'Try') {
+      console.info('openSettings: user-triggered try', href);
+      const a = document.createElement('a');
+      a.href = href;
+      a.style.display = 'none';
+      a.target = '_self';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(()=>{ document.body.removeChild(a); }, 800);
+    }
+  });
 }
 
 // Expose helpers used by inline onclick handlers to ensure they are available
 // when the DOM contains inline attributes (safer for some Android webviews).
 window.openSettings = openSettings;
 window.copy = copy;
+
+// Bind programmatic listeners for elements using data-action and data-copy.
+function bindSettingsLinks(root = document){
+  // action links
+  const els = root.querySelectorAll('[data-action]');
+  els.forEach(el=>{
+    // Avoid double-binding
+    if (el._boundSettings) return; el._boundSettings = true;
+    el.addEventListener('click', (ev)=>{
+      ev.preventDefault(); ev.stopPropagation();
+      const action = el.dataset.action;
+      const title = el.dataset.title || el.textContent || '';
+      const extras = {};
+      if (el.dataset.apn) extras.apn = decodeURIComponent(el.dataset.apn);
+      if (el.dataset.apnName) extras.apn_name = decodeURIComponent(el.dataset.apnName);
+      if (el.dataset.activationCode) extras.activation_code = decodeURIComponent(el.dataset.activationCode);
+      console.info('bound link clicked', {action, title, extras});
+      // Prefer safer guide modal which opens Settings root first
+      try { openSettingsOrGuide(action, title, extras); } catch(e){ console.error(e); }
+    });
+  });
+
+  // copy links
+  const copies = root.querySelectorAll('[data-copy-enc]');
+  copies.forEach(el=>{
+    if (el._boundCopy) return; el._boundCopy = true;
+    el.addEventListener('click', (ev)=>{
+      ev.preventDefault(); ev.stopPropagation();
+      const txt = decodeURIComponent(el.dataset.copyEnc || '');
+      navigator.clipboard?.writeText(txt).then(()=> toast('Copied'));
+    });
+  });
+}
+
+// Safer wrapper used by inline links: opens Settings root and shows a guide modal
+// with manual steps, copy buttons and an option to try deep-link candidates.
+function openSettingsOrGuide(action, title, extras = {}){
+  console.info('openSettingsOrGuide invoked', action, title, extras);
+  // Always try to open Settings root first (non-destructive)
+  try { openSettings('android.settings.SETTINGS'); } catch(e){ console.warn('openSettingsOrGuide: open root failed', e); }
+
+  // Remove existing modal if present
+  const prev = document.getElementById('settingsGuideModal');
+  if (prev) prev.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'settingsGuideModal';
+  modal.style.position = 'fixed';
+  modal.style.left = '0';
+  modal.style.top = '0';
+  modal.style.width = '100%';
+  modal.style.height = '100%';
+  modal.style.display = 'flex';
+  modal.style.alignItems = 'center';
+  modal.style.justifyContent = 'center';
+  modal.style.background = 'rgba(2,6,23,0.4)';
+  modal.style.zIndex = 10000;
+
+  const card = document.createElement('div');
+  card.style.width = 'min(720px, 96%)';
+  card.style.background = 'white';
+  card.style.borderRadius = '12px';
+  card.style.padding = '18px';
+  card.style.boxShadow = '0 20px 50px rgba(2,6,23,0.2)';
+
+  const h = document.createElement('h3'); h.textContent = title || 'Open Settings';
+  h.style.marginTop='0';
+  h.style.marginBottom='8px';
+  h.className='font-semibold';
+  card.appendChild(h);
+
+  const p = document.createElement('div');
+  p.style.fontSize='14px';
+  p.style.color='#334155';
+  p.style.marginBottom='12px';
+
+  // Provide tailored guidance for common actions (APN, SIM/eSIM, Data Roaming)
+  const last = (action||'').split('.').pop() || '';
+  if (last === 'APN_SETTINGS' || /APN/i.test(title)){
+    p.innerHTML = `Open Settings → Connections → Mobile networks → Access Point Names (APN).<br/>If APN is missing, tap Add and use the values from this page.`;
+  } else if (last === 'ADD_ESIM' || /ESIM/i.test(title)){
+    p.innerHTML = `Open Settings → Connections → SIM card manager → Add mobile plan (or: Settings → Connections → SIM card manager → Add mobile plan / Add eSIM).`;
+  } else if (last === 'SIM_SETTINGS' || /SIM/i.test(title)){
+    p.innerHTML = `Open Settings → Connections → SIM card manager (or Mobile networks) and select your eSIM/physical SIM to adjust settings.`;
+  } else if (last === 'DATA_ROAMING_SETTINGS' || /ROAM/i.test(title)){
+    p.innerHTML = `Open Settings → Connections → Mobile networks → Data roaming and toggle the switch.`;
+  } else {
+    p.innerHTML = `Open Settings and navigate to the appropriate screen. If you want, try the deep-link candidate below.`;
+  }
+  card.appendChild(p);
+
+  // Show useful values copied from extras (apn values, activation code)
+  const vals = document.createElement('div');
+  vals.style.display='flex'; vals.style.flexDirection='column'; vals.style.gap='8px';
+  if (extras.apn || extras.apn_name){
+    const box = document.createElement('div');
+    box.style.display='flex'; box.style.justifyContent='space-between'; box.style.alignItems='center';
+    const left = document.createElement('div');
+    left.innerHTML = `<div style="font-size:12px;color:#64748b">APN</div><div style="font-weight:600">${extras.apn_name || ''}</div><div style="font-size:13px;color:#0f172a">${extras.apn || ''}</div>`;
+    const copyBtn = document.createElement('button'); copyBtn.className='btn'; copyBtn.textContent='Copy APN';
+    copyBtn.addEventListener('click', ()=>{ navigator.clipboard?.writeText(JSON.stringify({apn_name: extras.apn_name, apn: extras.apn}, null, 0)); toast('APN copied'); });
+    box.appendChild(left); box.appendChild(copyBtn); vals.appendChild(box);
+  }
+  if (extras.activation_code){
+    const row = document.createElement('div');
+    row.style.display='flex'; row.style.justifyContent='space-between'; row.style.alignItems='center';
+    const left = document.createElement('div'); left.innerHTML = `<div style="font-size:12px;color:#64748b">Activation code</div><div style="font-weight:600">${extras.activation_code}</div>`;
+    const copyBtn = document.createElement('button'); copyBtn.className='btn'; copyBtn.textContent='Copy Code';
+    copyBtn.addEventListener('click', ()=>{ navigator.clipboard?.writeText(extras.activation_code); toast('Code copied'); });
+    row.appendChild(left); row.appendChild(copyBtn); vals.appendChild(row);
+  }
+  if (vals.children.length) card.appendChild(vals);
+
+  // Controls: Try deep link (open diagnostic panel) and Close
+  const ctr = document.createElement('div'); ctr.style.display='flex'; ctr.style.justifyContent='flex-end'; ctr.style.gap='8px'; ctr.style.marginTop='14px';
+  const tryBtn = document.createElement('button'); tryBtn.className='btn'; tryBtn.textContent='Open Settings (again)';
+  const deepBtn = document.createElement('button'); deepBtn.className='btn'; deepBtn.textContent='Show deep-link candidates';
+  const closeBtn = document.createElement('button'); closeBtn.className='btn'; closeBtn.textContent='Close';
+  ctr.appendChild(tryBtn); ctr.appendChild(deepBtn); ctr.appendChild(closeBtn);
+  card.appendChild(ctr);
+
+  modal.appendChild(card);
+  document.body.appendChild(modal);
+
+  tryBtn.addEventListener('click', ()=>{ try { openSettings('android.settings.SETTINGS'); } catch(e){} });
+  deepBtn.addEventListener('click', ()=>{
+    // Open diagnostic deep-link panel for this action
+    // Reuse existing panel generator by invoking openSettings(action) which
+    // will open root and show the deep-link candidate panel. We call it
+    // but then remove this modal to avoid stacking UI.
+    modal.remove();
+    openSettings(action);
+  });
+  closeBtn.addEventListener('click', ()=>{ modal.remove(); });
+}
+window.openSettingsOrGuide = openSettingsOrGuide;
 
 // Normalize CSV row into our expected field names
 function normalizeRow(r){
@@ -125,11 +449,11 @@ function render(row){
     quick.innerHTML = html`
       <h2 class="font-semibold text-lg mb-2">Quick Access (Android)</h2>
       <div class="flex flex-wrap gap-2">
-        <a class="btn" href="javascript:void(0)" onclick="openSettings('android.settings.ADD_ESIM')">Add eSIM</a>
-        <a class="btn" href="javascript:void(0)" onclick="openSettings('android.settings.SIM_SETTINGS')">SIM Manager</a>
-        <a class="btn" href="javascript:void(0)" onclick="openSettings('android.settings.DATA_ROAMING_SETTINGS')">Data Roaming</a>
-        <a class="btn" href="javascript:void(0)" onclick="openSettings('android.settings.APN_SETTINGS')">APN</a>
-        <a class="btn" href="javascript:void(0)" onclick="openSettings('android.settings.NETWORK_OPERATOR_SETTINGS')">Network Operators</a>
+        <a class="btn" href="#" data-action="android.settings.ADD_ESIM">Add eSIM</a>
+        <a class="btn" href="#" data-action="android.settings.SIM_SETTINGS">SIM Manager</a>
+        <a class="btn" href="#" data-action="android.settings.DATA_ROAMING_SETTINGS">Data Roaming</a>
+        <a class="btn" href="#" data-action="android.settings.APN_SETTINGS">APN</a>
+        <a class="btn" href="#" data-action="android.settings.NETWORK_OPERATOR_SETTINGS">Network Operators</a>
       </div>
       <p class="text-xs text-slate-500 mt-2">If a deep link is blocked on this device, the Settings root will open. Follow the on-screen path.</p>
     `;
@@ -148,11 +472,11 @@ function render(row){
         <div class="text-sm"><span class="font-medium">SM-DP+:</span> ${row.smdp || ''}</div>
         <div class="text-sm break-all"><span class="font-medium">Activation code:</span> ${row.activation_code || ''}</div>
         <div class="flex gap-2 pt-1">
-          <a class="btn" href="javascript:void(0)" onclick="copy('${(row.activation_code||'').replace(/'/g, '\\\'')}')">Copy Code</a>
-          <a class="btn" href="javascript:void(0)" onclick="copy('${(row.smdp||'').replace(/'/g, '\\\'')}')">Copy SM-DP+</a>
+          <a class="btn" href="#" data-copy-enc="${encodeURIComponent(row.activation_code||'')}">Copy Code</a>
+          <a class="btn" href="#" data-copy-enc="${encodeURIComponent(row.smdp||'')}">Copy SM-DP+</a>
           ${
             deviceIsAndroid()
-              ? `<a class="btn" href="javascript:void(0)" onclick="openSettings('android.settings.ADD_ESIM')">Open eSIM Setup</a>`
+              ? `<a class="btn" href="#" data-action="android.settings.ADD_ESIM" data-activation-code="${encodeURIComponent(row.activation_code||'')}">Open eSIM Setup</a>`
               : `<div class="text-sm">iPhone: open <span class="kbd">Settings → Cellular → Add eSIM</span></div>`
           }
         </div>
@@ -180,7 +504,7 @@ function render(row){
     <div class="flex flex-wrap gap-2 mb-2">
       ${
         deviceIsAndroid()
-          ? `<a class="btn" href="javascript:void(0)" onclick="openSettings('android.settings.SIM_SETTINGS')">Open SIM Manager</a>`
+          ? `<a class="btn" href="#" data-action="android.settings.SIM_SETTINGS">Open SIM Manager</a>`
           : `<div class="text-sm">iPhone: Settings → Cellular → Default Voice Line & Data Switching</div>`
       }
     </div>
@@ -197,7 +521,7 @@ function render(row){
     <h2 class="font-semibold text-lg mb-2">3) Ensure the eSIM is enabled</h2>
     ${
       deviceIsAndroid()
-        ? `<a class="btn" href="javascript:void(0)" onclick="openSettings('android.settings.SIM_SETTINGS')">Open SIM Manager</a>`
+        ? `<a class="btn" href="#" data-action="android.settings.SIM_SETTINGS">Open SIM Manager</a>`
         : `<div class="text-sm">iPhone: Settings → Cellular → your eSIM → Enable</div>`
     }`;
   steps.appendChild(s3);
@@ -210,7 +534,7 @@ function render(row){
     <div class="flex flex-wrap gap-2 mb-2">
       ${
         deviceIsAndroid()
-          ? `<a class="btn" href="javascript:void(0)" onclick="openSettings('android.settings.DATA_ROAMING_SETTINGS')">Open Data Roaming</a>`
+          ? `<a class="btn" href="#" data-action="android.settings.DATA_ROAMING_SETTINGS">Open Data Roaming</a>`
           : `<div class="text-sm">iPhone: Settings → Cellular → your eSIM → Data Roaming → OFF</div>`
       }
     </div>`;
@@ -236,9 +560,9 @@ function render(row){
       <div><span class="font-medium">MCC:</span> ${mcc || '—'}</div>
       <div><span class="font-medium">MNC:</span> ${mnc || '—'}</div>
     </div>
-    ${
+      ${
       deviceIsAndroid()
-        ? `<a class="btn" href="javascript:void(0)" onclick="openSettings('android.settings.APN_SETTINGS')">Open APN Settings</a>`
+        ? `<a class="btn" href="#" data-action="android.settings.APN_SETTINGS" data-apn="${encodeURIComponent(apn)}" data-apn-name="${encodeURIComponent(apnName)}">Open APN Settings</a>`
         : `<div class="text-sm">iPhone: APN is carrier-controlled and may not be editable.</div>`
     }
     <p class="text-xs text-slate-500 mt-2">If APN is missing, add a new APN with the values above and select it.</p>`;
@@ -252,7 +576,7 @@ function render(row){
     <p class="text-sm mb-2">Set to Automatic. If multiple networks appear, choose <strong>${row.operator_code || '12345'}</strong>.</p>
     ${
       deviceIsAndroid()
-        ? `<a class="btn" href="javascript:void(0)" onclick="openSettings('android.settings.NETWORK_OPERATOR_SETTINGS')">Open Network Operators</a>`
+        ? `<a class="btn" href="#" data-action="android.settings.NETWORK_OPERATOR_SETTINGS">Open Network Operators</a>`
         : `<div class="text-sm">iPhone: Settings → Cellular → Network Selection → Automatic (or choose the event operator).</div>`
     }`;
   steps.appendChild(s6);
@@ -337,3 +661,5 @@ async function loadData(){
 }
 
 loadData();
+// Bind static settings links in the page header (and any other static nodes)
+try { bindSettingsLinks(); } catch(e){ console.warn('initial bindSettingsLinks failed', e); }
