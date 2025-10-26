@@ -70,6 +70,11 @@ function openSettings(action) {
   })();
 }
 
+// Expose helpers used by inline onclick handlers to ensure they are available
+// when the DOM contains inline attributes (safer for some Android webviews).
+window.openSettings = openSettings;
+window.copy = copy;
+
 // Normalize CSV row into our expected field names
 function normalizeRow(r){
   const map = {};
